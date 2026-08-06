@@ -87,17 +87,19 @@
             cursor: pointer;
             margin-bottom: 20px;
         }
-        .btn-alerta-llena {
+        
+        .btn-alerta-llena-dinamico {
             background-color: #8e44ad;
             color: white;
-            font-size: 18px;
+            font-size: 16px;
             font-weight: bold;
             padding: 15px;
             width: 100%;
             border: none;
             border-radius: 8px;
             cursor: pointer;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
+            text-align: left;
         }
 
         .input-grupo {
@@ -105,12 +107,15 @@
             gap: 10px;
             margin-bottom: 20px;
         }
-        input[type="text"], input[type="date"] {
+        input[type="text"], input[type="date"], select {
             flex: 1;
             padding: 10px;
             border: 1px solid #ccc;
             border-radius: 5px;
             font-size: 14px;
+            margin-bottom: 10px;
+            width: 100%;
+            box-sizing: border-box;
         }
         button {
             padding: 10px 15px;
@@ -238,12 +243,22 @@
 
         <h2 id="tituloPanel">Panel de Control</h2>
 
+        <!-- SECCIÓN EXCLUSIVA PARA CHOFER (Con selector de cisterna) -->
         <div id="contenedorCisterna" class="oculto">
+            <label for="selectCisternaChofer"><strong>Selecciona tu Cisterna a Cargo:</strong></label>
+            <select id="selectCisternaChofer">
+                <option value="">-- Selecciona una cisterna --</option>
+                <option value="Cisterna 01">Cisterna 01</option>
+                <option value="Cisterna 02">Cisterna 02</option>
+                <option value="Cisterna 03">Cisterna 03</option>
+            </select>
             <button class="btn-alerta-cisterna" id="btnCisterna">🚨 Cisterna en Planta</button>
         </div>
 
-        <div id="contenedorCisternaLlena" class="oculto">
-            <button class="btn-alerta-llena" id="btnCisternaLlena">🟣 Cisterna Llena</button>
+        <!-- SECCIÓN EXCLUSIVA PARA OPERADOR (Botones dinámicos por cisterna) -->
+        <div id="contenedorCisternaLlenaDinamica" class="oculto">
+            <p>Cisternas esperando en planta:</p>
+            <div id="contenedorBotonesCisternasActivas"></div>
         </div>
 
         <div id="contenedorExportar" class="seccion-exportar oculto">
@@ -305,16 +320,17 @@
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
 
+        // Aquí puedes actualizar los números de WhatsApp y las API Keys obtenidas en CallMeBot
         const listaUsuarios = {
             Chofer: [
-                { nombre: "Carlos Gómez", clave: "1111" },
-                { nombre: "Pedro Ruiz", clave: "2222" },
-                { nombre: "Luis Mendoza", clave: "3333" }
+                { nombre: "Carlos Gómez", clave: "1111", telefono: "+51928228849", apiKey: "4812523" },
+                { nombre: "Pedro Ruiz", clave: "2222", telefono: "+51999999992", apiKey: "TU_API_KEY" },
+                { nombre: "Luis Mendoza", clave: "3333", telefono: "+51999999993", apiKey: "TU_API_KEY" }
             ],
             Operador: [
-                { nombre: "Mario Vargas", clave: "4444" },
-                { nombre: "Ana Torres", clave: "5555" },
-                { nombre: "Jorge Castro", clave: "6666" }
+                { nombre: "Mario Vargas", clave: "4444", telefono: "+51917138686", apiKey: "5163991" },
+                { nombre: "Ana Torres", clave: "5555", telefono: "+51999999995", apiKey: "TU_API_KEY" },
+                { nombre: "Jorge Castro", clave: "6666", telefono: "+51999999996", apiKey: "TU_API_KEY" }
             ]
         };
 
@@ -328,11 +344,12 @@
         const tituloPanel = document.getElementById('tituloPanel');
         const contenedorAgregar = document.getElementById('contenedorAgregar');
         const contenedorCisterna = document.getElementById('contenedorCisterna');
-        const contenedorCisternaLlena = document.getElementById('contenedorCisternaLlena');
+        const contenedorCisternaLlenaDinamica = document.getElementById('contenedorCisternaLlenaDinamica');
+        const contenedorBotonesCisternasActivas = document.getElementById('contenedorBotonesCisternasActivas');
         const contenedorExportar = document.getElementById('contenedorExportar');
+        const selectCisternaChofer = document.getElementById('selectCisternaChofer');
         
         const btnCisterna = document.getElementById('btnCisterna');
-        const btnCisternaLlena = document.getElementById('btnCisternaLlena');
         const btnExportarExcel = document.getElementById('btnExportarExcel');
         const fechaInicio = document.getElementById('fechaInicio');
         const fechaFin = document.getElementById('fechaFin');
@@ -351,13 +368,13 @@
 
         let rolActual = "";
         let usuarioActual = "";
+        let objetoChoferActual = null;
         let intervaloAlarma = null;
         let intervaloVoz = null;
         let audioCtx = null;
         let listaHistorialGlobal = [];
         let ultimoIdProcesado = 0;
 
-        // Solicitar permisos de notificación nativa al cargar
         function verificarPermisosNotificacion() {
             if (window.Notification) {
                 if (Notification.permission === "default") {
@@ -422,6 +439,7 @@
 
             if (ingreso === user.clave) {
                 usuarioActual = user.nombre;
+                objetoChoferActual = user;
                 inicializarAudioContext();
                 verificarPermisosNotificacion();
                 configurarInterfazPorRol();
@@ -455,19 +473,19 @@
                 tituloPanel.textContent = "Panel de Administrador";
                 contenedorAgregar.classList.remove('oculto');
                 contenedorCisterna.classList.add('oculto');
-                contenedorCisternaLlena.classList.add('oculto');
+                contenedorCisternaLlenaDinamica.classList.add('oculto');
                 contenedorExportar.classList.remove('oculto');
             } else if (rolActual === 'Operador') {
                 tituloPanel.textContent = "Panel de Operador";
                 contenedorAgregar.classList.add('oculto');
                 contenedorCisterna.classList.add('oculto');
-                contenedorCisternaLlena.classList.remove('oculto');
+                contenedorCisternaLlenaDinamica.classList.remove('oculto');
                 contenedorExportar.classList.add('oculto');
             } else if (rolActual === 'Chofer') {
                 tituloPanel.textContent = "Panel de Chofer";
                 contenedorAgregar.classList.add('oculto');
                 contenedorCisterna.classList.remove('oculto');
-                contenedorCisternaLlena.classList.add('oculto');
+                contenedorCisternaLlenaDinamica.classList.add('oculto');
                 contenedorExportar.classList.add('oculto');
             }
         }
@@ -477,6 +495,7 @@
             seccionRoles.classList.remove('oculto');
             rolActual = "";
             usuarioActual = "";
+            objetoChoferActual = null;
         }
 
         function sonarPitido() {
@@ -518,7 +537,6 @@
             textoAlertaModal.textContent = `${texto}\nRegistrado: ${fechaHora}`;
             modalAlerta.classList.remove('oculto');
 
-            // Lanzar notificación nativa flotante del sistema (funciona si la app está minimizada)
             if (window.Notification && Notification.permission === "granted") {
                 try {
                     new Notification(titulo, {
@@ -548,61 +566,123 @@
             return `${year}-${month}-${day}`;
         }
 
+        // Función para enviar WhatsApp automático con CallMeBot
+        function enviarAlertaWhatsAppChofer(telefono, apiKey, mensajeTexto) {
+    if (!telefono || !apiKey) return;
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${telefono}&text=${encodeURIComponent(mensajeTexto)}&apikey=${apiKey}`;
+    
+    fetch(url)
+        .then(response => console.log("Mensaje de WhatsApp enviado al chofer"))
+        .catch(err => console.error("Error al enviar WhatsApp:", err));
+}
+
+        // 1. EL CHOFER REGISTRA SU CISTERNA EN PLANTA
         btnCisterna.addEventListener('click', function() {
+            const cisternaSeleccionada = selectCisternaChofer.value;
+            if (!cisternaSeleccionada) {
+                alert("Por favor selecciona qué cisterna tienes a cargo.");
+                return;
+            }
+
             inicializarAudioContext();
             const ahora = new Date();
             const fechaIso = obtenerFechaISO();
             const horaFormateada = ahora.toLocaleTimeString();
             const fechaHoraCompleta = `${ahora.toLocaleDateString()} - ${horaFormateada}`;
+            const idUnico = Date.now();
 
-            database.ref('alertas/cisternaEnPlanta').set({
-                estado: "activada",
-                nombreChofer: usuarioActual,
+            database.ref('cisternasActivas/' + cisternaSeleccionada).set({
+                chofer: usuarioActual,
+                telefono: objetoChoferActual ? objetoChoferActual.telefono : "",
+                apiKey: objetoChoferActual ? objetoChoferActual.apiKey : "",
+                cisterna: cisternaSeleccionada,
                 fechaHora: fechaHoraCompleta,
-                id: Date.now()
+                id: idUnico
             });
 
             database.ref('historial').push({
-                texto: `🚨 Cisterna en Planta - Reportado por Chofer: ${usuarioActual}`,
+                texto: `🚨 ${cisternaSeleccionada} en Planta - Chofer: ${usuarioActual}`,
                 fechaHora: fechaHoraCompleta,
                 fechaIso: fechaIso
             });
+
+            alert(`Has reportado la ${cisternaSeleccionada} en planta con éxito.`);
         });
 
-        btnCisternaLlena.addEventListener('click', function() {
-            inicializarAudioContext();
-            const ahora = new Date();
-            const fechaIso = obtenerFechaISO();
-            const horaFormateada = ahora.toLocaleTimeString();
-            const fechaHoraCompleta = `${ahora.toLocaleDateString()} - ${horaFormateada}`;
+        // 2. EL OPERADOR ESCUCHA LAS CISTERNAS ACTIVAS Y CREA BOTONES DINÁMICOS
+        database.ref('cisternasActivas').on('value', function(snapshot) {
+            contenedorBotonesCisternasActivas.innerHTML = "";
+            const cisternas = snapshot.val();
 
-            database.ref('alertas/cisternaLlena').set({
-                estado: "activada",
-                nombreOperador: usuarioActual,
-                fechaHora: fechaHoraCompleta,
-                id: Date.now()
-            });
+            if (!cisternas) {
+                contenedorBotonesCisternasActivas.innerHTML = "<p style='color: #888;'>No hay cisternas en planta actualmente.</p>";
+                return;
+            }
 
-            database.ref('historial').push({
-                texto: `🟣 Cisterna Llena - Reportado por Operador: ${usuarioActual}`,
-                fechaHora: fechaHoraCompleta,
-                fechaIso: fechaIso
+            Object.keys(cisternas).forEach(idCisterna => {
+                const datos = cisternas[idCisterna];
+
+                if (rolActual === "Operador") {
+                    const botonDinamico = document.createElement('button');
+                    botonDinamico.className = "btn-alerta-llena-dinamico";
+                    botonDinamico.innerHTML = `🟣 Cisterna Llena - ${idCisterna} (Chofer: ${datos.chofer})`;
+
+                    botonDinamico.onclick = function() {
+                        if (confirm(`¿Confirmar que la ${idCisterna} está llena y enviar alarma al chofer ${datos.chofer}?`)) {
+                            const ahora = new Date();
+                            const fechaIso = obtenerFechaISO();
+                            const horaFormateada = ahora.toLocaleTimeString();
+                            const fechaHoraCompleta = `${ahora.toLocaleDateString()} - ${horaFormateada}`;
+                            const idUnicoAlerta = Date.now();
+
+                            // Disparamos el WhatsApp al chofer correspondiente mediante CallMeBot
+                            if (datos.telefono && datos.apiKey) {
+                                const textoWsp = `¡Hola ${datos.chofer}! Tu ${idCisterna} ya está llena y lista para salir de planta.`;
+                                enviarWhatsAppCallMeBot(datos.telefono, datos.apiKey, textoWsp);
+                            }
+
+                            // Guardamos la alerta de cisterna llena específica para este chofer en Firebase
+                            database.ref('alertas/cisternaLlena/' + idCisterna).set({
+                                estado: "activada",
+                                choferDestino: datos.chofer,
+                                cisterna: idCisterna,
+                                nombreOperador: usuarioActual,
+                                fechaHora: fechaHoraCompleta,
+                                id: idUnicoAlerta
+                            });
+
+                            database.ref('historial').push({
+                                texto: `🟣 ${idCisterna} Llena - Operador: ${usuarioActual} (Chofer: ${datos.chofer})`,
+                                fechaHora: fechaHoraCompleta,
+                                fechaIso: fechaIso
+                            });
+
+                            database.ref('cisternasActivas/' + idCisterna).remove();
+                        }
+                    };
+
+                    contenedorBotonesCisternasActivas.appendChild(botonDinamico);
+                }
             });
         });
 
-        database.ref('alertas/cisternaEnPlanta').on('value', function(snapshot) {
+        // 3. ALARMA PARA EL OPERADOR CUANDO LLEGA UNA CISTERNA
+        database.ref('cisternasActivas').on('child_added', function(snapshot) {
             const datos = snapshot.val();
-            if (datos && datos.estado === "activada" && rolActual === "Operador") {
-                const mensajeVoz = `El chofer ${datos.nombreChofer} reporta que la cisterna ya está en planta`;
-                activarAlarmaVisualYSonora("🚨 ¡ATENCIÓN!", `El chofer ${datos.nombreChofer} indicó que la cisterna llegó a planta.`, mensajeVoz, datos.fechaHora, datos.id);
+            if (datos && rolActual === "Operador") {
+                const mensajeVoz = `El chofer ${datos.chofer} reporta que la ${datos.cisterna} ya está en planta`;
+                activarAlarmaVisualYSonora("🚨 ¡ATENCIÓN!", `El chofer ${datos.chofer} indicó que la ${datos.cisterna} llegó a planta.`, mensajeVoz, datos.fechaHora, datos.id);
             }
         });
 
-        database.ref('alertas/cisternaLlena').on('value', function(snapshot) {
+        // 4. ALARMA PARA EL CHOFER ESPECÍFICO CUANDO SU CISTERNA ESTÁ LLENA
+        database.ref('alertas/cisternaLlena').on('child_added', function(snapshot) {
             const datos = snapshot.val();
             if (datos && datos.estado === "activada" && rolActual === "Chofer") {
-                const mensajeVoz = `El operador ${datos.nombreOperador} reporta que la cisterna ya está llena`;
-                activarAlarmaVisualYSonora("🟣 ¡AVISO!", `El operador ${datos.nombreOperador} indicó que la cisterna está llena.`, mensajeVoz, datos.fechaHora, datos.id);
+                if (datos.choferDestino === usuarioActual) {
+                    const mensajeVoz = `El operador ${datos.nombreOperador} reporta que tu ${datos.cisterna} ya está llena`;
+                    activarAlarmaVisualYSonora("🟣 ¡AVISO!", `El operador ${datos.nombreOperador} indicó que tu ${datos.cisterna} está llena.`, mensajeVoz, datos.fechaHora, datos.id);
+                }
             }
         });
 
@@ -671,9 +751,7 @@
             if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); }
 
             modalAlerta.classList.add('oculto');
-            
-            database.ref('alertas/cisternaEnPlanta').set({ estado: "apagada", nombreChofer: "", fechaHora: "", id: 0 });
-            database.ref('alertas/cisternaLlena').set({ estado: "apagada", nombreOperador: "", fechaHora: "", id: 0 });
+            database.ref('alertas/cisternaLlena').remove();
         });
 
         function agregarElemento() {
