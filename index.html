@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aplicación con Sistema Anti-Suspensión</title>
+    <title>Aplicación con Service Worker en Segundo Plano</title>
     
     <!-- Importamos Firebase desde la nube de Google -->
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
@@ -219,6 +219,17 @@
             border: none; border-radius: 5px; cursor: pointer; margin-top: 15px; font-weight: bold; width: 100%;
         }
         .btn-aceptar-alerta:hover { background-color: #27ae60; }
+        
+        .aviso-audio {
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -247,6 +258,10 @@
         <div class="info-usuario">
             <span id="textoBienvenida">Bienvenido</span>
             <button id="btnSalir" class="btn-salir">Cerrar Sesión</button>
+        </div>
+
+        <div class="aviso-audio">
+            🔊 <b>Nota:</b> Si cambiaste de app o bloqueaste el celular, toca este panel o un botón para asegurar que el sonido y la voz sigan activos.
         </div>
 
         <h2 id="tituloPanel">Panel de Control</h2>
@@ -311,12 +326,20 @@
         </div>
     </div>
 
-    <!-- AUDIO SILENCIOSO PARA EVITAR QUE EL SISTEMA DUERMA EL PROCESO -->
-    <audio id="audioSilencioso" loop style="display:none;">
-        <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=" type="audio/wav">
-    </audio>
-
     <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                const swCode = `
+                    self.addEventListener('install', (e) => { self.skipWaiting(); });
+                    self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
+                    self.addEventListener('push', (e) => {});
+                `;
+                const blob = new Blob([swCode], { type: 'text/javascript' });
+                const swUrl = URL.createObjectURL(blob);
+                navigator.serviceWorker.register(swUrl).catch(err => console.log("SW Error:", err));
+            });
+        }
+
         const firebaseConfig = {
             databaseURL: "https://reporte-c7556-default-rtdb.firebaseio.com/"
         };
@@ -365,7 +388,6 @@
         const tituloModalAlerta = document.getElementById('tituloModalAlerta');
         const textoAlertaModal = document.getElementById('textoAlertaModal');
         const btnCerrarAlerta = document.getElementById('btnCerrarAlerta');
-        const audioSilencioso = document.getElementById('audioSilencioso');
 
         let rolActual = "";
         let usuarioActual = "";
@@ -388,9 +410,7 @@
                 const btn = document.createElement('button');
                 btn.className = tipoRol === 'Operador' ? 'btn-usuario operador' : 'btn-usuario';
                 btn.textContent = `👤 ${user.nombre}`;
-                btn.onclick = function() {
-                    pedirClaveUsuario(user);
-                };
+                btn.onclick = function() { pedirClaveUsuario(user); };
                 contenedorBotonesUsuarios.appendChild(btn);
             });
 
@@ -404,17 +424,23 @@
             rolActual = "";
         }
 
+        function inicializarAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
         function pedirClaveUsuario(user) {
             let ingreso = prompt(`Ingresa la contraseña para ${user.nombre}:`);
             if (ingreso === null) return;
 
             if (ingreso === user.clave) {
                 usuarioActual = user.nombre;
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                
-                audioSilencioso.play().catch(e => console.log("Audio bloqueado:", e));
+                inicializarAudioContext();
                 iniciarLatidoAntiSuspension();
-
                 configurarInterfazPorRol();
             } else {
                 alert("¡Contraseña incorrecta!");
@@ -428,31 +454,26 @@
             if (ingreso === claveCorrecta) {
                 rolActual = nombreRol;
                 usuarioActual = "Administrador Principal";
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                
-                audioSilencioso.play().catch(e => console.log("Audio bloqueado:", e));
+                inicializarAudioContext();
                 iniciarLatidoAntiSuspension();
-
                 configurarInterfazPorRol();
             } else {
                 alert("¡Contraseña incorrecta!");
             }
         }
 
-        // FUNCIÓN ANTI-SUSPENSIÓN: Escribe un mini registro cada 25 segundos en Firebase para mantener el hilo activo
         function iniciarLatidoAntiSuspension() {
             if (latidoInterval) clearInterval(latidoInterval);
             latidoInterval = setInterval(() => {
                 if (rolActual) {
                     database.ref('sistema/latido').set({ timestamp: Date.now() });
                 }
-            }, 25000);
+            }, 20000);
         }
 
-        // DETECTOR DE VISIBILIDAD: Si vuelves a abrir la pestaña después de un tiempo, sincroniza inmediatamente
         document.addEventListener("visibilitychange", function() {
             if (!document.hidden && rolActual) {
-                // Forzamos la lectura inmediata del estado de alertas por si hubo alguna mientras la pestaña estaba oculta
+                inicializarAudioContext();
                 database.ref('alertas/cisternaEnPlanta').once('value', function(snapshot) {
                     const datos = snapshot.val();
                     if (datos && datos.estado === "activada" && rolActual === "Operador") {
@@ -498,7 +519,6 @@
         }
 
         function cerrarSesion() {
-            audioSilencioso.pause();
             if (latidoInterval) clearInterval(latidoInterval);
             seccionApp.classList.add('oculto');
             seccionRoles.classList.remove('oculto');
@@ -508,14 +528,14 @@
 
         function sonarPitido() {
             try {
+                inicializarAudioContext();
                 if (!audioCtx) return;
-                if (audioCtx.state === 'suspended') { audioCtx.resume(); }
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 
                 osc.type = 'square';
                 osc.frequency.value = 950; 
-                gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
                 
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
@@ -544,6 +564,7 @@
         }
 
         function activarAlarmaVisualYSonora(titulo, texto, fraseVoz, fechaHora) {
+            inicializarAudioContext();
             tituloModalAlerta.textContent = titulo;
             textoAlertaModal.textContent = `${texto}\nRegistrado: ${fechaHora}`;
             modalAlerta.classList.remove('oculto');
@@ -554,10 +575,7 @@
                     icon: "https://cdn-icons-png.flaticon.com/512/565/565547.png",
                     requireInteraction: true
                 });
-                
-                notif.onclick = function() {
-                    window.focus();
-                };
+                notif.onclick = function() { window.focus(); };
             }
 
             sonarPitido();
@@ -580,6 +598,7 @@
         }
 
         btnCisterna.addEventListener('click', function() {
+            inicializarAudioContext();
             const ahora = new Date();
             const fechaIso = obtenerFechaISO();
             const horaFormateada = ahora.toLocaleTimeString();
@@ -600,6 +619,7 @@
         });
 
         btnCisternaLlena.addEventListener('click', function() {
+            inicializarAudioContext();
             const ahora = new Date();
             const fechaIso = obtenerFechaISO();
             const horaFormateada = ahora.toLocaleTimeString();
@@ -654,6 +674,7 @@
         });
 
         btnExportarExcel.addEventListener('click', function() {
+            inicializarAudioContext();
             const inicio = fechaInicio.value;
             const fin = fechaFin.value;
 
@@ -705,6 +726,7 @@
         });
 
         function agregarElemento() {
+            inicializarAudioContext();
             const texto = inputOpcion.value.trim();
             if (texto === "") return;
             const li = document.createElement('li');
@@ -724,15 +746,6 @@
             inputOpcion.value = "";
             inputOpcion.focus();
         }
-
-        const checkboxesIniciales = document.querySelectorAll('#lista input[type="checkbox"]');
-        checkboxesIniciales.forEach(cb => {
-            cb.addEventListener('change', function() {
-                const fila = cb.parentElement;
-                if (cb.checked) { fila.classList.add('completado'); } 
-                else { fila.classList.remove('completado'); }
-            });
-        });
 
         btnSalir.addEventListener('click', cerrarSesion);
         btnAgregar.addEventListener('click', agregarElemento);
