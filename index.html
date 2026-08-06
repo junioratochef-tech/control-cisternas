@@ -200,30 +200,30 @@
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.85);
             display: flex; justify-content: center; align-items: center;
             z-index: 1000;
         }
         .modal-contenido {
             background: white; padding: 25px; border-radius: 10px; text-align: center; max-width: 320px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-            animation: vibrar 0.2s infinite alternate;
+            box-shadow: 0 5px 25px rgba(231, 76, 60, 0.6);
+            animation: vibrar 0.15s infinite alternate;
         }
         @keyframes vibrar {
-            from { transform: translateX(-3px); }
-            to { transform: translateX(3px); }
+            from { transform: translateX(-5px) scale(1); }
+            to { transform: translateX(5px) scale(1.02); }
         }
-        .modal-contenido h3 { color: #c0392b; margin-top: 0; font-size: 22px; }
+        .modal-contenido h3 { color: #c0392b; margin-top: 0; font-size: 24px; }
         .btn-aceptar-alerta {
-            background-color: #2ecc71; color: white; font-size: 16px; padding: 10px 20px;
+            background-color: #2ecc71; color: white; font-size: 16px; padding: 12px 20px;
             border: none; border-radius: 5px; cursor: pointer; margin-top: 15px; font-weight: bold; width: 100%;
         }
         .btn-aceptar-alerta:hover { background-color: #27ae60; }
         
         .aviso-audio {
-            background: #fff3cd;
-            border: 1px solid #ffeeba;
-            color: #856404;
+            background: #e2f0d9;
+            border: 1px solid #c8e1b7;
+            color: #274e13;
             padding: 10px;
             border-radius: 5px;
             margin-bottom: 15px;
@@ -261,7 +261,7 @@
         </div>
 
         <div class="aviso-audio">
-            🔊 <b>Nota:</b> Si cambiaste de app o bloqueaste el celular, toca este panel o un botón para asegurar que el sonido y la voz sigan activos.
+            🟢 <b>Sistema Activo:</b> Mantén esta pestaña abierta en tu navegador para recibir los avisos sonoros al instante.
         </div>
 
         <h2 id="tituloPanel">Panel de Control</h2>
@@ -322,7 +322,7 @@
         <div class="modal-contenido">
             <h3 id="tituloModalAlerta">🚨 ¡ALERTA!</h3>
             <p id="textoAlertaModal">¡Una cisterna acaba de llegar a planta!</p>
-            <button class="btn-aceptar-alerta" id="btnCerrarAlerta">Aceptar</button>
+            <button class="btn-aceptar-alerta" id="btnCerrarAlerta">Silenciar y Aceptar</button>
         </div>
     </div>
 
@@ -396,6 +396,7 @@
         let audioCtx = null;
         let listaHistorialGlobal = [];
         let latidoInterval = null;
+        let ultimoIdProcesado = 0;
 
         if (window.Notification && Notification.permission !== "granted") {
             Notification.requestPermission();
@@ -425,11 +426,15 @@
         }
 
         function inicializarAudioContext() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            } catch(e) {
+                console.log("AudioContext error:", e);
             }
         }
 
@@ -468,26 +473,13 @@
                 if (rolActual) {
                     database.ref('sistema/latido').set({ timestamp: Date.now() });
                 }
-            }, 20000);
+            }, 10000);
         }
 
+        // Detectar cuando el usuario vuelve a mirar la pestaña para reactivar audio
         document.addEventListener("visibilitychange", function() {
-            if (!document.hidden && rolActual) {
+            if (!document.hidden) {
                 inicializarAudioContext();
-                database.ref('alertas/cisternaEnPlanta').once('value', function(snapshot) {
-                    const datos = snapshot.val();
-                    if (datos && datos.estado === "activada" && rolActual === "Operador") {
-                        const mensajeVoz = `El chofer ${datos.nombreChofer} reporta que la cisterna ya está en planta`;
-                        activarAlarmaVisualYSonora("🚨 ¡ATENCIÓN!", `El chofer ${datos.nombreChofer} indicó que la cisterna llegó a planta.`, mensajeVoz, datos.fechaHora);
-                    }
-                });
-                database.ref('alertas/cisternaLlena').once('value', function(snapshot) {
-                    const datos = snapshot.val();
-                    if (datos && datos.estado === "activada" && rolActual === "Chofer") {
-                        const mensajeVoz = `El operador ${datos.nombreOperador} reporta que la cisterna ya está llena`;
-                        activarAlarmaVisualYSonora("🟣 ¡AVISO!", `El operador ${datos.nombreOperador} indicó que la cisterna está llena.`, mensajeVoz, datos.fechaHora);
-                    }
-                });
             }
         });
 
@@ -535,57 +527,68 @@
                 
                 osc.type = 'square';
                 osc.frequency.value = 950; 
-                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
                 
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
                 
                 osc.start();
-                osc.stop(audioCtx.currentTime + 0.3);
+                osc.stop(audioCtx.currentTime + 0.35);
             } catch (e) {
-                console.log("Error de audio:", e);
+                console.log("Error de audio pitido:", e);
             }
         }
 
         function decirMensajeVoz(textoTexto) {
             if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                const mensaje = new SpeechSynthesisUtterance(textoTexto);
-                mensaje.lang = 'es-ES';
-                mensaje.rate = 1.0;
-                mensaje.pitch = 1.0;
+                try {
+                    window.speechSynthesis.cancel();
+                    const mensaje = new SpeechSynthesisUtterance(textoTexto);
+                    mensaje.lang = 'es-ES';
+                    mensaje.rate = 1.0;
+                    mensaje.pitch = 1.0;
 
-                const voces = window.speechSynthesis.getVoices();
-                const vozEspanol = voces.find(v => v.lang.startsWith('es'));
-                if (vozEspanol) { mensaje.voice = vozEspanol; }
+                    const voces = window.speechSynthesis.getVoices();
+                    const vozEspanol = voces.find(v => v.lang.startsWith('es'));
+                    if (vozEspanol) { mensaje.voice = vozEspanol; }
 
-                window.speechSynthesis.speak(mensaje);
+                    window.speechSynthesis.speak(mensaje);
+                } catch(e) {
+                    console.log("Error de voz:", e);
+                }
             }
         }
 
-        function activarAlarmaVisualYSonora(titulo, texto, fraseVoz, fechaHora) {
+        function activarAlarmaVisualYSonora(titulo, texto, fraseVoz, fechaHora, idEvento) {
+            if (idEvento && idEvento === ultimoIdProcesado) return;
+            if (idEvento) ultimoIdProcesado = idEvento;
+
             inicializarAudioContext();
             tituloModalAlerta.textContent = titulo;
             textoAlertaModal.textContent = `${texto}\nRegistrado: ${fechaHora}`;
             modalAlerta.classList.remove('oculto');
 
             if (window.Notification && Notification.permission === "granted") {
-                const notif = new Notification(titulo, {
-                    body: texto,
-                    icon: "https://cdn-icons-png.flaticon.com/512/565/565547.png",
-                    requireInteraction: true
-                });
-                notif.onclick = function() { window.focus(); };
+                try {
+                    const notif = new Notification(titulo, {
+                        body: texto,
+                        icon: "https://cdn-icons-png.flaticon.com/512/565/565547.png",
+                        requireInteraction: true
+                    });
+                    notif.onclick = function() { window.focus(); };
+                } catch(e) {
+                    console.log("Notificación error:", e);
+                }
             }
 
             sonarPitido();
             if (!intervaloAlarma) {
-                intervaloAlarma = setInterval(sonarPitido, 500);
+                intervaloAlarma = setInterval(sonarPitido, 600);
             }
 
             decirMensajeVoz(fraseVoz);
             if (!intervaloVoz) {
-                intervaloVoz = setInterval(() => decirMensajeVoz(fraseVoz), 4000);
+                intervaloVoz = setInterval(() => decirMensajeVoz(fraseVoz), 4500);
             }
         }
 
@@ -643,7 +646,7 @@
             const datos = snapshot.val();
             if (datos && datos.estado === "activada" && rolActual === "Operador") {
                 const mensajeVoz = `El chofer ${datos.nombreChofer} reporta que la cisterna ya está en planta`;
-                activarAlarmaVisualYSonora("🚨 ¡ATENCIÓN!", `El chofer ${datos.nombreChofer} indicó que la cisterna llegó a planta.`, mensajeVoz, datos.fechaHora);
+                activarAlarmaVisualYSonora("🚨 ¡ATENCIÓN!", `El chofer ${datos.nombreChofer} indicó que la cisterna llegó a planta.`, mensajeVoz, datos.fechaHora, datos.id);
             }
         });
 
@@ -651,7 +654,7 @@
             const datos = snapshot.val();
             if (datos && datos.estado === "activada" && rolActual === "Chofer") {
                 const mensajeVoz = `El operador ${datos.nombreOperador} reporta que la cisterna ya está llena`;
-                activarAlarmaVisualYSonora("🟣 ¡AVISO!", `El operador ${datos.nombreOperador} indicó que la cisterna está llena.`, mensajeVoz, datos.fechaHora);
+                activarAlarmaVisualYSonora("🟣 ¡AVISO!", `El operador ${datos.nombreOperador} indicó que la cisterna está llena.`, mensajeVoz, datos.fechaHora, datos.id);
             }
         });
 
